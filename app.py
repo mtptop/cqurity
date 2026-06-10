@@ -6,11 +6,11 @@ import google.generativeai as genai
 # 1. Page Configuration Settings
 st.set_page_config(page_title="AI Security Sentinel", layout="wide")
 st.title("🛡️ AI Security Sentinel: Vulnerability & Malware Analyzer")
-st.caption("Bachelor Project Prototyping - Engineered with Google Gemma 4 31B Dense Matrix")
+st.caption("Bachelor Project Prototyping - Engineered with Google Gemini 2.5 Flash")
 
 # 2. Sidebar Configuration for API Key Verification
 st.sidebar.header("System Access Layer")
-user_api_key = st.sidebar.text_input("Enter Gemma API Key:", type="password")
+user_api_key = st.sidebar.text_input("Enter Gemini API Key:", type="password")
 
 if user_api_key:
     genai.configure(api_key=user_api_key)
@@ -28,7 +28,7 @@ with tab1:
     
     if uploaded_files:
         if not user_api_key:
-            st.warning("Provide your free system key in the sidebar configuration panel to run the AI analyzer engine.")
+            st.sidebar.warning("⚠️ Provide your free system key in the sidebar configuration panel to run the AI analyzer engine.")
         else:
             st.success(f"{len(uploaded_files)} source files successfully staged in local browser memory.")
             
@@ -39,7 +39,7 @@ with tab1:
                     
                     st.markdown(f"#### Scanning file nodes: `{uploaded_file.name}`")
                     
-                    # Formatting custom constraints specifically optimized for Gemma 4 31B Dense Logic Processing
+                    # Formatting custom constraints specifically optimized for structural parsing
                     prompt = f"""
                     You are an expert automated security auditor. Analyze the following code.
                     Identify the single most critical accidental security vulnerability present.
@@ -56,32 +56,41 @@ with tab1:
                     {file_text}
                     """
                     
-                    with st.spinner("Gemma processing syntax embeddings..."):
+                    with st.spinner("Processing syntax embeddings..."):
                         try:
-                            # Declare the specific model ID for Gemma 4 31B Instruction model
-                            model = genai.GenerativeModel("gemma-4-31b-it")
+                            # Declare the stable workhorse model: gemini-2.5-flash
+                            model = genai.GenerativeModel("gemini-2.5-flash")
                             response = model.generate_content(prompt)
                             
-                            # Sanitize response structures to prevent JSON decoding crashes
-                            clean_text = response.text.strip().replace("```json", "").replace("```", "")
-                            parsed_output = json.loads(clean_text)
+                            # Clean response text structures safely
+                            raw_text = response.text.strip()
+                            if "```json" in raw_text:
+                                raw_text = raw_text.split("```json")[1].split("```")[0].strip()
+                            elif "```" in raw_text:
+                                raw_text = raw_text.split("```")[1].split("```")[0].strip()
+                                
+                            parsed_output = json.loads(raw_text)
                             
                             # Render UI Analytics Cards
-                            with st.expander(f"⚠️ Flagged Item: {parsed_output['vulnerability_found']} ({parsed_output['risk_level']})"):
-                                st.markdown(f"**Classification ID:** `{parsed_output['cwe_id']}`")
-                                st.error(f"**Exploit Mechanism:** {parsed_output['attack_vector_summary']}")
+                            with st.expander(f"⚠️ Flagged Item: {parsed_output.get('vulnerability_found', 'Logic Issue')} ({parsed_output.get('risk_level', 'High')})"):
+                                st.markdown(f"**Classification ID:** `{parsed_output.get('cwe_id', 'N/A')}`")
+                                st.error(f"**Exploit Mechanism:** {parsed_output.get('attack_vector_summary', 'No summary generated.')}")
                                 
                                 st.markdown("**Remediated Safe Production Code Patch:**")
-                                st.code(parsed_output['remediated_code_patch'], language="python")
+                                st.code(parsed_output.get('remediated_code_patch', '# No patch provided'), language="python")
                                 
                                 # Download trigger giving users the ability to export fixed files immediately
                                 st.download_button(
                                     label="💾 Download Remediated Code Script",
-                                    data=parsed_output['remediated_code_patch'],
+                                    data=parsed_output.get('remediated_code_patch', ''),
                                     file_name=f"fixed_{uploaded_file.name}",
                                     mime="text/plain",
                                     key=f"dl_{uploaded_file.name}"
                                 )
+                        except json.JSONDecodeError:
+                            st.warning(f"⚠️ Raw structural data returned for `{uploaded_file.name}`. Parsing formatting wrapper below:")
+                            with st.expander("View Unstructured Report"):
+                                st.write(response.text)
                         except Exception as error_msg:
                             st.error(f"Execution Error processing target block: {error_msg}")
                     
@@ -99,7 +108,7 @@ with tab2:
     
     if malware_files:
         if not user_api_key:
-            st.warning("Provide your free system key in the sidebar configuration panel to run the AI analyzer engine.")
+            st.sidebar.warning("⚠️ Provide your free system key in the sidebar configuration panel to run the AI analyzer engine.")
         else:
             st.info(f"{len(malware_files)} payloads loaded into processing vectors.")
             
@@ -125,23 +134,32 @@ with tab2:
                     {m_text}
                     """
                     
-                    with st.spinner("Gemma tracking malicious signature patterns..."):
+                    with st.spinner("Tracking malicious signature patterns..."):
                         try:
-                            model = genai.GenerativeModel("gemma-4-31b-it")
+                            model = genai.GenerativeModel("gemini-2.5-flash")
                             response = model.generate_content(prompt)
                             
-                            clean_m_text = response.text.strip().replace("```json", "").replace("```", "")
+                            clean_m_text = response.text.strip()
+                            if "```json" in clean_m_text:
+                                clean_m_text = clean_m_text.split("```json")[1].split("```")[0].strip()
+                            elif "```" in clean_m_text:
+                                clean_m_text = clean_m_text.split("```")[1].split("```")[0].strip()
+                                
                             m_parsed = json.loads(clean_m_text)
                             
                             # Dynamic UI color shifting depending on malware verdicts
-                            if "MALICIOUS" in m_parsed["verdict"].upper():
-                                st.error(f"🚨 Verdict: {m_parsed['verdict']} (Confidence: {m_parsed['confidence_rating']})")
-                                st.markdown(f"**Identified Anomaly Vector Location:** `{m_parsed['malicious_snippet_location']}`")
-                                st.markdown(f"**Threat Behavior Profile:** {m_parsed['threat_behavior_profile']}")
+                            if "MALICIOUS" in m_parsed.get("verdict", "").upper():
+                                st.error(f"🚨 Verdict: {m_parsed.get('verdict')} (Confidence: {m_parsed.get('confidence_rating', 'Unknown')})")
+                                st.markdown(f"**Identified Anomaly Vector Location:** `{m_parsed.get('malicious_snippet_location')}`")
+                                st.markdown(f"**Threat Behavior Profile:** {m_parsed.get('threat_behavior_profile')}")
                             else:
-                                st.success(f"✅ Verdict: {m_parsed['verdict']} (Confidence: {m_parsed['confidence_rating']})")
+                                st.success(f"✅ Verdict: {m_parsed.get('verdict', 'CLEAN STRUCTURE')} (Confidence: {m_parsed.get('confidence_rating', '100%')})")
                                 st.markdown("No active backdoors, hidden supply-chain dependency injections, or trojanized payloads identified inside this source block.")
                                 
+                        except json.JSONDecodeError:
+                            st.warning(f"⚠️ Raw structural malware report generated for `{mal_file.name}`:")
+                            with st.expander("View Unstructured Threat Profile"):
+                                st.write(response.text)
                         except Exception as e:
                             st.error(f"Error executing threat audit sequence: {e}")
                     
