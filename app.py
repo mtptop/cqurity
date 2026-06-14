@@ -1,11 +1,24 @@
+import sys
+import subprocess
+
+# --------------------------------------------------------
+# 0. AUTOMATED DEPENDENCY BOOTSTRAP (Fixes the ImportError)
+# --------------------------------------------------------
+try:
+    from google import genai
+    from google.genai import types
+except ImportError:
+    # Programmatically force-installs the correct package if Streamlit skips it
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "google-genai"])
+    from google import genai
+    from google.genai import types
+
 import os
 import re
 import time
 import zipfile
 import tempfile
 import streamlit as st
-from google import genai
-from google.genai import types
 
 # --------------------------------------------------------
 # 1. STREAMLIT PAGE CONFIGURATION & UI THEME
@@ -72,7 +85,6 @@ def parse_dependencies(file_path: str, base_dir: str) -> list:
         for pattern in patterns:
             matches = re.findall(pattern, content)
             for match in matches:
-                # Basic cleaning of paths/module names
                 clean_dep = match.split('.')[0] if ext == '.py' else match
                 deps.append(clean_dep)
     except Exception:
@@ -85,7 +97,6 @@ def scan_directory(base_dir: str):
     
     for root, _, files in os.walk(base_dir):
         for file in files:
-            # Skip hidden files
             if file.startswith('.'):
                 continue
                 
@@ -130,7 +141,6 @@ def render_sidebar_tree(base_dir: str, current_dir: str, level=0):
             with st.sidebar.expander(f"{indent}📁 {item}", expanded=False):
                 render_sidebar_tree(base_dir, full_path, level + 1)
         else:
-            rel_file = os.path.relpath(full_path, base_dir)
             st.sidebar.markdown(f"{indent}📄 {item}")
 
 # --------------------------------------------------------
@@ -142,14 +152,12 @@ def generate_analysis_batches(registry: dict, max_tokens=100000):
     current_batch = []
     current_tokens = 0
     
-    # Sort files prioritizing items with dependencies to keep them grouped
     sorted_files = sorted(registry.keys(), key=lambda x: len(registry[x]['dependencies']), reverse=True)
     
     for file_path in sorted_files:
         file_tokens = registry[file_path]['estimated_tokens']
         
         if file_tokens > max_tokens:
-            # File is abnormally huge; isolate it into its own context run
             batches.append([file_path])
             continue
             
@@ -194,7 +202,6 @@ def execute_gemma_scan(batch_files: list, registry: dict):
         prompt_payload += f"\n--- FILE: {file_path} ---\n{registry[file_path]['content']}\n"
         
     try:
-        # Enforce reasoning thinking trace for high-complexity code scanning
         response = client.models.generate_content(
             model="gemma-4-31b-it",
             contents=prompt_payload,
@@ -216,7 +223,6 @@ st.write("---")
 uploaded_zip = st.file_uploader("Drop your target source repository ZIP archive here", type=["zip"])
 
 if uploaded_zip:
-    # Set up runtime directory
     temp_dir = tempfile.TemporaryDirectory()
     zip_path = os.path.join(temp_dir.name, "repo.zip")
     extract_path = os.path.join(temp_dir.name, "extracted_source")
@@ -227,14 +233,11 @@ if uploaded_zip:
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
         zip_ref.extractall(extract_path)
         
-    # Instant Metadata Scan & Tree Generation
     file_registry = scan_directory(extract_path)
     
-    # Render Sidebar Repository Map
     st.sidebar.markdown("### 📂 Repository File Tree")
     render_sidebar_tree(extract_path, extract_path)
     
-    # Main Dash Information Overview
     st.subheader("📊 Target Package Snapshot")
     col1, col2, col3 = st.columns(3)
     col1.metric("Total File Assets", len(file_registry))
@@ -243,21 +246,16 @@ if uploaded_zip:
     
     st.write("---")
     
-    # Analysis Routine Execution Trigger
     if st.button("🚀 Run Vulnerability & Malware Scan"):
         batches = generate_analysis_batches(file_registry)
         st.info(f"📦 Grouped workspace into **{len(batches)} optimal context delivery batches**.")
         
-        results_placeholder = st.container()
         progress_bar = st.progress(0.0)
-        
         all_raw_responses = ""
         
         for idx, batch in enumerate(batches):
             with st.spinner(f"Auditing Group Batch {idx + 1}/{len(batches)}..."):
-                # Safety Rate-Limit Throttle
                 time.sleep(4.0)
-                
                 batch_response = execute_gemma_scan(batch, file_registry)
                 all_raw_responses += batch_response + "\n"
                 
@@ -266,12 +264,10 @@ if uploaded_zip:
         progress_bar.empty()
         st.success("✅ Audit cycle complete! See individual breakdown records below:")
         
-        # Parse and present individual file results cleanly
         for file_path, details in file_registry.items():
             st.write(f"---")
             st.markdown(f"### 📄 Target Artifact: `{file_path}`")
             
-            # Simple fallback string processing to isolate file segments safely
             try:
                 segment_pattern = rf"=== START FILE: {re.escape(file_path)} ===(.*?)=== END FILE: {re.escape(file_path)} ==="
                 segment_match = re.search(segment_pattern, all_raw_responses, re.DOTALL)
@@ -279,7 +275,6 @@ if uploaded_zip:
                 if segment_match:
                     file_analysis = segment_match.group(1)
                     
-                    # Status Isolation
                     status_match = re.search(r"### Status:\s*(\w+)", file_analysis)
                     status = status_match.group(1) if status_match else "UNKNOWN"
                     
@@ -290,20 +285,17 @@ if uploaded_zip:
                     else:
                         st.error("🚨 Code Status Assessment: Malicious Payload Signatures Flagged")
                         
-                    # Flaws Rendering
                     flaws_segment = re.search(r"### Flaws Found:(.*?)(?=### Refactored Code:|$)", file_analysis, re.DOTALL)
                     if flaws_segment:
                         st.markdown("#### 🔍 Discovered Deficiencies:")
                         st.markdown(flaws_segment.group(1).strip())
                         
-                    # Code Block Isolator & Presentation with Built-in Streamlit Copy Mechanics
                     code_segment = re.search(r"### Refactored Code:\s*\n```[a-zA-Z0-9]*\n(.*?)```", file_analysis, re.DOTALL)
                     if code_segment:
                         st.markdown("#### 💡 Remediated, Clean Code Implementations:")
                         st.caption("Use the copy button on the top right of the code window below for deployment:")
                         st.code(code_segment.group(1).strip())
                 else:
-                    # In case the model diverged slightly from strict syntax constraints
                     st.info("📊 Generic Scan Insights Compiled:")
                     st.write(all_raw_responses)
             except Exception as parse_error:
