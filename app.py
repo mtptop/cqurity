@@ -1,193 +1,310 @@
-import streamlit as st
-import json
+import os
+import re
 import time
-import google.generativeai as genai
+import zipfile
+import tempfile
+import streamlit as st
+from google import genai
+from google.genai import types
 
-# 1. Page Configuration Settings
-st.set_page_config(page_title="AI Security Sentinel", layout="wide")
-st.title("🛡️ AI Security Sentinel: Vulnerability & Malware Analyzer")
-st.caption("Bachelor Project Prototyping - Production Ready Cloud Execution Engine")
+# --------------------------------------------------------
+# 1. STREAMLIT PAGE CONFIGURATION & UI THEME
+# --------------------------------------------------------
+st.set_page_config(
+    page_title="AI Vulnerability & Malware Detector",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# 2. Automated Secrets Vault & Sidebar API Key Fallback Configuration
-# It first checks if the key exists in Streamlit's hidden cloud secrets vault.
-# If not found, it provides a fallback input field in the sidebar.
-api_key_source = ""
-if "GEMINI_API_KEY" in st.secrets:
-    api_key_source = st.secrets["GEMINI_API_KEY"]
-    st.sidebar.success("🔒 System Access Layer: Secured via Cloud Secrets Vault")
-else:
-    st.sidebar.header("System Access Layer")
-    api_key_source = st.sidebar.text_input("Enter Gemini API Key:", type="password", help="Provide your free key if cloud secrets are not configured.")
+# Custom Minimalist CSS for a clean look
+st.markdown("""
+    <style>
+    .reportview-container { background: #fdfdfd; }
+    .sidebar .sidebar-content { background: #f5f5f7; }
+    div.stButton > button:first-child {
+        background-color: #0071e3;
+        color: white;
+        border-radius: 8px;
+        border: none;
+        padding: 0.5rem 2rem;
+    }
+    div.stButton > button:first-child:hover {
+        background-color: #0077ed;
+        color: white;
+    }
+    </style>
+""", unsafe_with_html=True)
 
-if api_key_source:
-    genai.configure(api_key=api_key_source)
+# Initialize GenAI Client
+@st.cache_resource
+def get_ai_client():
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        st.error("❌ GEMINI_API_KEY variable not detected in environment variables.")
+        st.stop()
+    return genai.Client(api_key=api_key)
 
-tab1, tab2 = st.tabs(["🔍 Source Code Vulnerabilities (SAST)", "☣️ Injected Malicious Code Detector"])
+client = get_ai_client()
 
-# -------------------------------------------------------------------------
-# TAB 1: ACCIDENTAL VULNERABILITIES (DEVELOPER MISTAKES)
-# -------------------------------------------------------------------------
-with tab1:
-    st.header("Static Application Security Testing (SAST) Matrix")
-    st.markdown("Upload active code scripts to sweep logic lines for security oversights like buffer vulnerabilities or injections.")
+# --------------------------------------------------------
+# 2. FILE HANDLING & DEPENDENCY CORE LOGIC
+# --------------------------------------------------------
+def estimate_tokens(text: str) -> int:
+    """Estimates code token footprint based on character distributions."""
+    return int(len(text) / 3.5) + 50  # Adding a constant padding value
+
+def parse_dependencies(file_path: str, base_dir: str) -> list:
+    """Extracts internal code dependencies to structure execution chains."""
+    deps = []
+    ext = os.path.splitext(file_path)[1].lower()
     
-    uploaded_files = st.file_uploader("Stage Source Scripts", type=["py", "c", "cpp", "java", "js"], accept_multiple_files=True, key="sast_upload")
-    
-    if uploaded_files:
-        if not api_key_source:
-            st.warning("⚠️ Please provide a valid Gemini API Key to activate the AI analyzer engine.")
-        else:
-            st.success(f"{len(uploaded_files)} source files successfully staged in local browser memory.")
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
             
-            if st.button("Run Architecture Vulnerability Scan"):
-                for uploaded_file in uploaded_files:
-                    file_bytes = uploaded_file.read()
-                    file_text = file_bytes.decode("utf-8", errors="ignore")
-                    
-                    st.markdown(f"#### Scanning file nodes: `{uploaded_file.name}`")
-                    
-                    # Flexible conditional prompt that explicitly allows for completely clean code passes
-                    prompt = f"""
-                    You are an expert automated security auditor. Analyze the following code.
-                    Determine if a genuine security vulnerability, logical flaw, or operational risk is present.
+        # Target common import statements across languages (Python, JS, C++, etc.)
+        patterns = [
+            r'(?:import|from)\s+([a-zA-Z0-9_\.]+)',
+            r'require\([\'"](.+)[\'"]\)',
+            r'#include\s+[\'"](.+)[\'"]'
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, content)
+            for match in matches:
+                # Basic cleaning of paths/module names
+                clean_dep = match.split('.')[0] if ext == '.py' else match
+                deps.append(clean_dep)
+    except Exception:
+        pass
+    return deps
 
-                    If the code is structurally safe, self-contained, handles data boundaries properly, and poses no real exploitation or compliance risks, you MUST output this identical JSON schema:
-                    {{
-                        "vulnerability_found": "NONE",
-                        "cwe_id": "VALID",
-                        "risk_level": "Safe",
-                        "attack_vector_summary": "The analyzed code structure follows secure coding standards and contains no identifiable vulnerability pathways.",
-                        "remediated_code_patch": "No remediation required."
-                    }}
-
-                    Otherwise, if a legitimate risk or flaw is present, output ONLY a valid JSON object string using this layout:
-                    {{
-                        "vulnerability_found": "Name of Security Flaw",
-                        "cwe_id": "CWE-XXX",
-                        "risk_level": "Critical/High/Medium",
-                        "attack_vector_summary": "Explain how an attacker physically exploits this exact flaw structure",
-                        "remediated_code_patch": "Provide the fully safe and rewritten version of the entire code block here"
-                    }}
-                    
-                    Do not include extra conversational text outside the JSON block.
-                    Source Code Text to Scan:
-                    {file_text}
-                    """
-                    
-                    with st.spinner("Processing syntax embeddings..."):
-                        try:
-                            model = genai.GenerativeModel("gemini-2.5-flash")
-                            response = model.generate_content(prompt)
-                            
-                            # Clean response text structures safely
-                            raw_text = response.text.strip()
-                            if "```json" in raw_text:
-                                raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-                            elif "```" in raw_text:
-                                raw_text = raw_text.split("```")[1].split("```")[0].strip()
-                                
-                            parsed_output = json.loads(raw_text)
-                            
-                            # Route the UI display based on whether a vulnerability was actually discovered
-                            if parsed_output.get('vulnerability_found', '').upper() == "NONE":
-                                st.success(f"✅ Clean Pass: `{uploaded_file.name}` matches all verified secure coding baseline parameters.")
-                            else:
-                                with st.expander(f"⚠️ Flagged Item: {parsed_output.get('vulnerability_found', 'Logic Issue')} ({parsed_output.get('risk_level', 'High')})"):
-                                    st.markdown(f"**Classification ID:** `{parsed_output.get('cwe_id', 'N/A')}`")
-                                    st.error(f"**Exploit Mechanism:** {parsed_output.get('attack_vector_summary', 'No summary generated.')}")
-                                    
-                                    st.markdown("**Remediated Safe Production Code Patch:**")
-                                    st.code(parsed_output.get('remediated_code_patch', '# No patch provided'), language="python")
-                                    
-                                    st.download_button(
-                                        label="💾 Download Remediated Code Script",
-                                        data=parsed_output.get('remediated_code_patch', ''),
-                                        file_name=f"fixed_{uploaded_file.name}",
-                                        mime="text/plain",
-                                        key=f"dl_{uploaded_file.name}"
-                                    )
-                        except json.JSONDecodeError:
-                            st.warning(f"⚠️ Raw structural data returned for `{uploaded_file.name}`. Parsing formatting wrapper below:")
-                            with st.expander("View Unstructured Report"):
-                                st.write(response.text)
-                        except Exception as error_msg:
-                            st.error(f"Execution Error processing target block: {error_msg}")
-                    
-                    time.sleep(4)
-
-# -------------------------------------------------------------------------
-# TAB 2: INJECTED MALICIOUS CODE (SUPPLY CHAIN ATTACKS & TROJANS)
-# -------------------------------------------------------------------------
-with tab2:
-    st.header("Injected Logic & Trojanized Backdoor Auditor")
-    st.markdown("Upload suspected software scripts or source code repositories to check for foreign code fragments planted by malicious third parties.")
+def scan_directory(base_dir: str):
+    """Walks directory to build metadata registry and dependency mappings."""
+    file_registry = {}
     
-    malware_files = st.file_uploader("Stage Target System Files for Malware Sweep", type=["py", "js", "html", "sh"], accept_multiple_files=True, key="mal_upload")
-    
-    if malware_files:
-        if not api_key_source:
-            st.warning("⚠️ Please provide a valid Gemini API Key to activate the AI analyzer engine.")
-        else:
-            st.info(f"{len(malware_files)} payloads loaded into processing vectors.")
+    for root, _, files in os.walk(base_dir):
+        for file in files:
+            # Skip hidden files
+            if file.startswith('.'):
+                continue
+                
+            full_path = os.path.join(root, file)
+            rel_path = os.path.relpath(full_path, base_dir)
             
-            if st.button("Scan Content Vectors for Injected Exploits"):
-                for mal_file in malware_files:
-                    m_bytes = mal_file.read()
-                    m_text = m_bytes.decode("utf-8", errors="ignore")
+            try:
+                with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                
+                file_registry[rel_path] = {
+                    "full_path": full_path,
+                    "size_bytes": os.path.getsize(full_path),
+                    "estimated_tokens": estimate_tokens(content),
+                    "dependencies": parse_dependencies(full_path, base_dir),
+                    "content": content
+                }
+            except Exception:
+                continue
+                
+    return file_registry
+
+# --------------------------------------------------------
+# 3. INTERACTIVE MAC-LIKE SIDEBAR COMPONENT
+# --------------------------------------------------------
+def render_sidebar_tree(base_dir: str, current_dir: str, level=0):
+    """Recursively draws folder maps using minimalist native components."""
+    try:
+        items = os.listdir(current_dir)
+    except Exception:
+        return
+        
+    items = sorted(items, key=lambda x: (not os.path.isdir(os.path.join(current_dir, x)), x.lower()))
+    
+    for item in items:
+        if item.startswith('.'):
+            continue
+        full_path = os.path.join(current_dir, item)
+        indent = "  " * level
+        
+        if os.path.isdir(full_path):
+            with st.sidebar.expander(f"{indent}📁 {item}", expanded=False):
+                render_sidebar_tree(base_dir, full_path, level + 1)
+        else:
+            rel_file = os.path.relpath(full_path, base_dir)
+            st.sidebar.markdown(f"{indent}📄 {item}")
+
+# --------------------------------------------------------
+# 4. CHUNKING & STRATEGY GENERATOR
+# --------------------------------------------------------
+def generate_analysis_batches(registry: dict, max_tokens=100000):
+    """Groups code files down dependent paths without overflowing token boundaries."""
+    batches = []
+    current_batch = []
+    current_tokens = 0
+    
+    # Sort files prioritizing items with dependencies to keep them grouped
+    sorted_files = sorted(registry.keys(), key=lambda x: len(registry[x]['dependencies']), reverse=True)
+    
+    for file_path in sorted_files:
+        file_tokens = registry[file_path]['estimated_tokens']
+        
+        if file_tokens > max_tokens:
+            # File is abnormally huge; isolate it into its own context run
+            batches.append([file_path])
+            continue
+            
+        if current_tokens + file_tokens > max_tokens:
+            batches.append(current_batch)
+            current_batch = [file_path]
+            current_tokens = file_tokens
+        else:
+            current_batch.append(file_path)
+            current_tokens += file_tokens
+            
+    if current_batch:
+        batches.append(current_batch)
+        
+    return batches
+
+# --------------------------------------------------------
+# 5. AI INFERENCE PIPELINE
+# --------------------------------------------------------
+def execute_gemma_scan(batch_files: list, registry: dict):
+    """Packages code blocks and communicates securely with Gemma 4 31B."""
+    prompt_payload = (
+        "You are an advanced, hyper-detailed secure code auditor. Analyze the following file(s) "
+        "comprehensively for architectural vulnerabilities, security flaws, weaknesses, and malicious payloads.\n"
+        "CRITICAL INSTRUCTION: Do NOT halt evaluation upon locating a single flaw. Continue scanning the "
+        "entirety of every file to catch all hidden issues. You must evaluate the code fully.\n\n"
+        "Provide your analysis back strictly matching this exact markdown structure for EVERY single file:\n\n"
+        "=== START FILE: [File Path] ===\n"
+        "### Status: [SAFE or VULNERABLE or MALICIOUS]\n\n"
+        "### Flaws Found:\n"
+        "[Enumerate line-by-line structural descriptions of any issues found. If safe, state 'None.']\n\n"
+        "### Refactored Code:\n"
+        "```[language]\n"
+        "[Provide the absolute full, fully-functional, copy-paste ready safe file code replacement here. "
+        "Do not truncate or summarize the code.]\n"
+        "```\n"
+        "=== END FILE: [File Path] ===\n\n"
+        "Here is the code to audit:\n"
+    )
+    
+    for file_path in batch_files:
+        prompt_payload += f"\n--- FILE: {file_path} ---\n{registry[file_path]['content']}\n"
+        
+    try:
+        # Enforce reasoning thinking trace for high-complexity code scanning
+        response = client.models.generate_content(
+            model="gemma-4-31b-it",
+            contents=prompt_payload,
+            config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_level="high")
+            )
+        )
+        return response.text
+    except Exception as e:
+        return f"⚠️ Execution Error during API payload transmission: {str(e)}"
+
+# --------------------------------------------------------
+# 6. MAIN USER UI & APPLICATION ROUTER
+# --------------------------------------------------------
+st.title("🛡️ VulnAI: Source Code Vulnerability & Malware Auditor")
+st.caption("Bachelor Project Engine • Powered by Google Gemma 4 31B Core API")
+st.write("---")
+
+uploaded_zip = st.file_uploader("Drop your target source repository ZIP archive here", type=["zip"])
+
+if uploaded_zip:
+    # Set up runtime directory
+    temp_dir = tempfile.TemporaryDirectory()
+    zip_path = os.path.join(temp_dir.name, "repo.zip")
+    extract_path = os.path.join(temp_dir.name, "extracted_source")
+    
+    with open(zip_path, "wb") as f:
+        f.write(uploaded_zip.getbuffer())
+        
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(extract_path)
+        
+    # Instant Metadata Scan & Tree Generation
+    file_registry = scan_directory(extract_path)
+    
+    # Render Sidebar Repository Map
+    st.sidebar.markdown("### 📂 Repository File Tree")
+    render_sidebar_tree(extract_path, extract_path)
+    
+    # Main Dash Information Overview
+    st.subheader("📊 Target Package Snapshot")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total File Assets", len(file_registry))
+    col2.metric("Total Code Size", f"{sum(f['size_bytes'] for f in file_registry.values()) / 1024:.2f} KB")
+    col3.metric("Aggregated Context Weight", f"~{sum(f['estimated_tokens'] for f in file_registry.values())} Tokens")
+    
+    st.write("---")
+    
+    # Analysis Routine Execution Trigger
+    if st.button("🚀 Run Vulnerability & Malware Scan"):
+        batches = generate_analysis_batches(file_registry)
+        st.info(f"📦 Grouped workspace into **{len(batches)} optimal context delivery batches**.")
+        
+        results_placeholder = st.container()
+        progress_bar = st.progress(0.0)
+        
+        all_raw_responses = ""
+        
+        for idx, batch in enumerate(batches):
+            with st.spinner(f"Auditing Group Batch {idx + 1}/{len(batches)}..."):
+                # Safety Rate-Limit Throttle
+                time.sleep(4.0)
+                
+                batch_response = execute_gemma_scan(batch, file_registry)
+                all_raw_responses += batch_response + "\n"
+                
+            progress_bar.progress((idx + 1) / len(batches))
+            
+        progress_bar.empty()
+        st.success("✅ Audit cycle complete! See individual breakdown records below:")
+        
+        # Parse and present individual file results cleanly
+        for file_path, details in file_registry.items():
+            st.write(f"---")
+            st.markdown(f"### 📄 Target Artifact: `{file_path}`")
+            
+            # Simple fallback string processing to isolate file segments safely
+            try:
+                segment_pattern = rf"=== START FILE: {re.escape(file_path)} ===(.*?)=== END FILE: {re.escape(file_path)} ==="
+                segment_match = re.search(segment_pattern, all_raw_responses, re.DOTALL)
+                
+                if segment_match:
+                    file_analysis = segment_match.group(1)
                     
-                    st.markdown(f"#### Auditing content structure: `{mal_file.name}`")
+                    # Status Isolation
+                    status_match = re.search(r"### Status:\s*(\w+)", file_analysis)
+                    status = status_match.group(1) if status_match else "UNKNOWN"
                     
-                    prompt = f"""
-                    You are a reverse-engineering security response agent. Scan this file content.
-                    Determine if an attacker has deliberately injected malicious logic (e.g., trojans, backdoors, hidden data exfiltration, obscured bash shells).
-                    
-                    If the code contains no backdoors or malicious alterations, you MUST output this JSON schema:
-                    {{
-                        "verdict": "CLEAN STRUCTURE",
-                        "confidence_rating": "100%",
-                        "malicious_snippet_location": "None",
-                        "threat_behavior_profile": "No active backdoors, tracking modules, or malicious modifications identified."
-                    }}
-                    
-                    Otherwise, output ONLY a valid JSON object string using this layout:
-                    {{
-                        "verdict": "MALICIOUS CODE FOUND",
-                        "confidence_rating": "Percentage (e.g. 95%)",
-                        "malicious_snippet_location": "Identify line strings or functions containing the anomaly",
-                        "threat_behavior_profile": "Describe precisely what the injected script attempts to execute covertly"
-                    }}
-                    
-                    Do not include extra text outside the JSON structure.
-                    File Payload Content to Audit:
-                    {m_text}
-                    """
-                    
-                    with st.spinner("Tracking malicious signature patterns..."):
-                        try:
-                            model = genai.GenerativeModel("gemini-2.5-flash")
-                            response = model.generate_content(prompt)
-                            
-                            clean_m_text = response.text.strip()
-                            if "```json" in clean_m_text:
-                                clean_m_text = clean_m_text.split("```json")[1].split("```")[0].strip()
-                            elif "```" in clean_m_text:
-                                clean_m_text = clean_m_text.split("```")[1].split("```")[0].strip()
-                                
-                            m_parsed = json.loads(clean_m_text)
-                            
-                            if "MALICIOUS" in m_parsed.get("verdict", "").upper():
-                                st.error(f"🚨 Verdict: {m_parsed.get('verdict')} (Confidence: {m_parsed.get('confidence_rating', 'Unknown')})")
-                                st.markdown(f"**Identified Anomaly Vector Location:** `{m_parsed.get('malicious_snippet_location')}`")
-                                st.markdown(f"**Threat Behavior Profile:** {m_parsed.get('threat_behavior_profile')}")
-                            else:
-                                st.success(f"✅ Verdict: {m_parsed.get('verdict', 'CLEAN STRUCTURE')} (Confidence: {m_parsed.get('confidence_rating', '100%')})")
-                                st.markdown(f"**Threat Behavior Profile:** {m_parsed.get('threat_behavior_profile')}")
-                                
-                        except json.JSONDecodeError:
-                            st.warning(f"⚠️ Raw structural malware report generated for `{mal_file.name}`:")
-                            with st.expander("View Unstructured Threat Profile"):
-                                st.write(response.text)
-                        except Exception as e:
-                            st.error(f"Error executing threat audit sequence: {e}")
-                    
-                    time.sleep(4)
+                    if "SAFE" in status.upper():
+                        st.success("🟢 Code Status Assessment: Clean / Safe")
+                    elif "VULNERABLE" in status.upper():
+                        st.warning("⚠️ Code Status Assessment: Security Vulnerability Detected")
+                    else:
+                        st.error("🚨 Code Status Assessment: Malicious Payload Signatures Flagged")
+                        
+                    # Flaws Rendering
+                    flaws_segment = re.search(r"### Flaws Found:(.*?)(?=### Refactored Code:|$)", file_analysis, re.DOTALL)
+                    if flaws_segment:
+                        st.markdown("#### 🔍 Discovered Deficiencies:")
+                        st.markdown(flaws_segment.group(1).strip())
+                        
+                    # Code Block Isolator & Presentation with Built-in Streamlit Copy Mechanics
+                    code_segment = re.search(r"### Refactored Code:\s*\n```[a-zA-Z0-9]*\n(.*?)```", file_analysis, re.DOTALL)
+                    if code_segment:
+                        st.markdown("#### 💡 Remediated, Clean Code Implementations:")
+                        st.caption("Use the copy button on the top right of the code window below for deployment:")
+                        st.code(code_segment.group(1).strip())
+                else:
+                    # In case the model diverged slightly from strict syntax constraints
+                    st.info("📊 Generic Scan Insights Compiled:")
+                    st.write(all_raw_responses)
+            except Exception as parse_error:
+                st.error(f"Could not render custom code UI split accurately: {str(parse_error)}")
