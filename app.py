@@ -100,7 +100,7 @@ def render_sidebar_tree(base_dir: str, current_dir: str, level=0):
 # 4. LIVE ROUTER & RENDERING INTERFACE
 # --------------------------------------------------------
 st.title("🛡️ VulnAI: Advanced Repository Security Engine")
-st.caption("Bachelor Project Portal Engine • Optimized via Gemma 4 26B MoE")
+st.caption("Bachelor Project Portal Engine • Optimized via Gemini 3.1 flash lite")
 st.write("")
 
 uploaded_zip = st.file_uploader("Upload repository package ZIP file", type=["zip"])
@@ -174,7 +174,7 @@ if uploaded_zip:
             try:
                 # Switched cleanly to the faster MoE model
                 response_stream = client.models.generate_content_stream(
-                    model="gemma-4-26b-a4b-it",
+                    model="gemini-3.1-flash-lite",
                     contents=prompt,
                     config=config,
                 )
