@@ -10,7 +10,7 @@ from groq import Groq
 # 1. STREAMLIT SYSTEM INITIALIZATION
 # --------------------------------------------------------
 st.set_page_config(
-    page_title="VulnAI: Groq Advanced Engine",
+    page_title="VulnAI: Groq C Advanced Engine",
     layout="wide",
     initial_sidebar_state="expanded"
 )
