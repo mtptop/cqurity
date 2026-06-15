@@ -4,41 +4,42 @@ import time
 import zipfile
 import tempfile
 import streamlit as st
-from google import genai
-from google.genai import types
+from groq import Groq
 
 # --------------------------------------------------------
-# 1. STREAMLIT WORKSPACE CONFIGURATION
+# 1. STREAMLIT SYSTEM INITIALIZATION
 # --------------------------------------------------------
 st.set_page_config(
-    page_title="VulnAI: Security Engine",
+    page_title="VulnAI: Groq Advanced Engine",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 @st.cache_resource
-def get_ai_client():
-    api_key = os.environ.get("GEMINI_API_KEY")
+def get_groq_client():
+    api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        st.error("❌ GEMINI_API_KEY is missing from Streamlit Secrets.")
+        st.error("❌ GROQ_API_KEY is missing from Streamlit Secrets.")
         st.stop()
-    return genai.Client(api_key=api_key)
+    return Groq(api_key=api_key)
 
-client = get_ai_client()
+client = get_groq_client()
 
 # --------------------------------------------------------
-# 2. FILE SCANNING & RESOURCE CALCULATOR
+# 2. FILE SCANNING & DEPENDENCY CORE LOGIC
 # --------------------------------------------------------
 def estimate_tokens(text: str) -> int:
-    """Estimates code block context footprint safely."""
+    """Estimates code token footprint based on character distributions."""
     return int(len(text) / 3.5) + 50
 
-def parse_dependencies(file_path: str) -> list:
-    """Scans code components to look up structural import declarations."""
+def parse_dependencies(file_path: str, base_dir: str) -> list:
+    """Extracts internal code dependencies to structure execution chains."""
     deps = []
+    ext = os.path.splitext(file_path)[1].lower()
     try:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
+            
         patterns = [
             r'(?:import|from)\s+([a-zA-Z0-9_\.]+)',
             r'require\([\'"](.+)[\'"]\)',
@@ -47,13 +48,14 @@ def parse_dependencies(file_path: str) -> list:
         for pattern in patterns:
             matches = re.findall(pattern, content)
             for match in matches:
-                deps.append(match.split('.')[0])
+                clean_dep = match.split('.')[0] if ext == '.py' else match
+                deps.append(clean_dep)
     except Exception:
         pass
     return deps
 
 def scan_directory(base_dir: str):
-    """Maps entire workspace archive compiling files and computing weights."""
+    """Walks directory to build metadata registry and dependency mappings."""
     file_registry = {}
     for root, _, files in os.walk(base_dir):
         for file in files:
@@ -68,7 +70,7 @@ def scan_directory(base_dir: str):
                     "full_path": full_path,
                     "size_bytes": os.path.getsize(full_path),
                     "estimated_tokens": estimate_tokens(content),
-                    "dependencies": parse_dependencies(full_path),
+                    "dependencies": parse_dependencies(full_path, base_dir),
                     "content": content
                 }
             except Exception:
@@ -79,7 +81,6 @@ def scan_directory(base_dir: str):
 # 3. INTERACTIVE SIDEBAR TREE COMPONENT
 # --------------------------------------------------------
 def render_sidebar_tree(base_dir: str, current_dir: str, level=0):
-    """Recursively draws the folder structure map in the left sidebar."""
     try:
         items = os.listdir(current_dir)
     except Exception:
@@ -97,13 +98,78 @@ def render_sidebar_tree(base_dir: str, current_dir: str, level=0):
             st.sidebar.text(f"{indent}📄 {item}")
 
 # --------------------------------------------------------
-# 4. LIVE ROUTER & RENDERING INTERFACE
+# 4. DEPENDENCY-BASED BATCHING STRATEGY
 # --------------------------------------------------------
-st.title("🛡️ VulnAI: Advanced Repository Security Engine")
-st.caption("Bachelor Project Portal Engine • Optimized via Gemini 3.1 flash lite")
+def generate_analysis_batches(registry: dict, max_tokens=100000):
+    """Groups interconnected code files together under strict context limits."""
+    batches = []
+    current_batch = []
+    current_tokens = 0
+    # Sorting components based on their structural dependencies down the execution wire
+    sorted_files = sorted(registry.keys(), key=lambda x: len(registry[x]['dependencies']), reverse=True)
+    
+    for file_path in sorted_files:
+        file_tokens = registry[file_path]['estimated_tokens']
+        if file_tokens > max_tokens:
+            batches.append([file_path])
+            continue
+        if current_tokens + file_tokens > max_tokens:
+            batches.append(current_batch)
+            current_batch = [file_path]
+            current_tokens = file_tokens
+        else:
+            current_batch.append(file_path)
+            current_tokens += file_tokens
+    if current_batch:
+        batches.append(current_batch)
+    return batches
+
+# --------------------------------------------------------
+# 5. GROQ LIVE INFERENCE PIPELINE (Genuine Analyzer Prompt)
+# --------------------------------------------------------
+def execute_groq_scan(batch_files: list, registry: dict):
+    """Assembles context data payloads and opens an instantaneous Groq stream."""
+    prompt_payload = (
+        "You are an objective, hyper-accurate software security auditor. Analyze the following file(s) "
+        "comprehensively for architectural vulnerabilities, security flaws, weaknesses, and malicious payloads.\n"
+        "CRITICAL INSTRUCTION: Do NOT invent, assume, or force false flaws if the code is safe. "
+        "Be a completely unbiased analyzer. If the code follows safe patterns, explicitly rate it as SAFE "
+        "and state that no flaws were found.\n\n"
+        "Provide your analysis back strictly matching this exact layout structure for EVERY single file:\n\n"
+        "=== START FILE: [File Path] ===\n"
+        "### Status: [SAFE or VULNERABLE or MALICIOUS]\n\n"
+        "### Flaws Found:\n"
+        "[List genuine issues itemized here. If no security issues exist, write 'None.']\n\n"
+        "### Refactored Code:\n"
+        "```\n"
+        "[Only provide replacement code if vulnerabilities were present. Otherwise, state 'No refactoring required.']\n"
+        "```\n"
+        "=== END FILE: [File Path] ===\n\n"
+        "Here is the code to audit:\n"
+    )
+    
+    for file_path in batch_files:
+        prompt_payload += f"\n--- FILE: {file_path} ---\n{registry[file_path]['content']}\n"
+        
+    try:
+        completion = client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=[{"role": "user", "content": prompt_payload}],
+            stream=True
+        )
+        return completion
+    except Exception as e:
+        st.error(f"⚠️ Groq API connection failure: {str(e)}")
+        return None
+
+# --------------------------------------------------------
+# 6. MAIN APPLICATION GRAPHICAL ROUTER
+# --------------------------------------------------------
+st.title("🛡️ VulnAI: Advanced Groq Security Engine")
+st.caption("Bachelor Project Portal Engine • Hosted on Meta Llama 4 Scout (17B Active MoE)")
 st.write("")
 
-uploaded_zip = st.file_uploader("Upload repository package ZIP file", type=["zip"])
+uploaded_zip = st.file_uploader("Drop your target source repository ZIP archive here", type=["zip"])
 
 if uploaded_zip:
     temp_dir = tempfile.TemporaryDirectory()
@@ -116,77 +182,42 @@ if uploaded_zip:
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
         zip_ref.extractall(extract_path)
         
-    # Process project telemetry immediately
     file_registry = scan_directory(extract_path)
     
-    # Sidebar tree generation
-    st.sidebar.markdown("### 📂 Folder Workspace")
+    # Render left sidebar structure
+    st.sidebar.markdown("### 📂 Repository File Tree")
     render_sidebar_tree(extract_path, extract_path)
     
-    # Dashboard Telemetry Cards
-    st.subheader("📊 Workspace Telemetry Snapshot")
-    m_col1, m_col2, m_col3 = st.columns(3)
-    m_col1.metric("Total File Assets", len(file_registry))
-    m_col2.metric("Workspace Size", f"{sum(f['size_bytes'] for f in file_registry.values()) / 1024:.2f} KB")
-    m_col3.metric("Estimated Tokens", f"~{sum(f['estimated_tokens'] for f in file_registry.values())}")
+    # Project Snapshot Telemetry Metrics
+    st.subheader("📊 Target Package Snapshot")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total File Assets", len(file_registry))
+    col2.metric("Total Code Size", f"{sum(f['size_bytes'] for f in file_registry.values()) / 1024:.2f} KB")
+    col3.metric("Aggregated Context Weight", f"~{sum(f['estimated_tokens'] for f in file_registry.values())} Tokens")
     st.write("")
     
-    if st.button("🚀 Execute Comprehensive Analysis Scan", use_container_width=True):
-        st.write("### 📜 Real-time Generation Feed")
+    if st.button("🚀 Run Cloud-Speed Dependency-Batched Scan", use_container_width=True):
+        batches = generate_analysis_batches(file_registry)
+        st.info(f"📦 Workspace organized into **{len(batches)} multi-file dependency batches**.")
         
-        # Loop through files sequentially to support streaming logs and exact execution times
-        for current_idx, (file_path, file_meta) in enumerate(file_registry.items()):
-            st.markdown(f"---")
-            st.markdown(f"#### 🔍 Auditing Target File ({current_idx+1}/{len(file_registry)}): `{file_path}`")
+        for idx, batch in enumerate(batches):
+            st.markdown(f"### 📦 Processing Context Batch {idx + 1}/{len(batches)}")
+            st.caption(f"Batch files included: {', '.join([f'`{b}`' for b in batch])}")
             
-            # 4-Second safety interval gate
-            time.sleep(4.0)
-            
-            # Unbiased prompt structure preventing forced hallucinations
-            prompt = (
-                "You are an objective, hyper-accurate software security auditor. Your goal is to analyze code "
-                "for security vulnerabilities, malware patterns, and fatal structural code injection gaps.\n\n"
-                "CRITICAL: Do NOT invent, assume, or force false flaws if the code is safe. "
-                "Be a completely unbiased analyzer. If the code follows safe patterns, explicitly rate it as SAFE "
-                "and state that no flaws were found.\n\n"
-                "Provide your response matching this exact layout format:\n"
-                "### Status: [SAFE or VULNERABLE or MALICIOUS]\n\n"
-                "### Flaws Found:\n"
-                "[List genuine issues itemized here. If no security issues exist, write 'None.']\n\n"
-                "### Refactored Code:\n"
-                "```\n"
-                "[Only provide replacement code if vulnerabilities were present. Otherwise, state 'No refactoring required.']\n"
-                "```\n\n"
-                f"File Target Name: {file_path}\n"
-                f"Code Component Content:\n{file_meta['content']}"
-            )
-            
-            config = types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_level="HIGH"),
-            )
-            
-            stream_box = st.empty()
-            full_text = ""
-            
-            # Start timer calculation
             start_time = time.time()
+            response_stream = execute_groq_scan(batch, file_registry)
             
-            try:
-                # Switched cleanly to the faster MoE model
-                response_stream = client.models.generate_content_stream(
-                    model="gemini-3.1-flash-lite",
-                    contents=prompt,
-                    config=config,
-                )
+            if response_stream:
+                stream_box = st.empty()
+                batch_text = ""
                 
                 for chunk in response_stream:
-                    if chunk.text:
-                        full_text += chunk.text
-                        stream_box.markdown(full_text)
-                        
-                # Conclude timing tracking metrics
-                elapsed_time = time.time() - start_time
-                st.info(f"⏱️ **Analysis Duration:** {elapsed_time:.2f} seconds")
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        batch_text += chunk.choices[0].delta.content
+                        stream_box.markdown(batch_text)
                 
-            except Exception as e:
-                st.error(f"⚠️ API pipeline failure on `{file_path}`: {str(e)}")
+                elapsed_time = time.time() - start_time
+                st.success(f"⏱️ **Batch {idx + 1} processing duration:** {elapsed_time:.2f} seconds")
+        
+        st.write("---")
+        st.success("🎉 Comprehensive repository audit finished. You can review the streamed logs above.")
