@@ -8,9 +8,13 @@ from google import genai
 from google.genai import types
 
 # --------------------------------------------------------
-# 1. STREAMLIT SETTING
+# 1. STREAMLIT WORKSPACE CONFIGURATION
 # --------------------------------------------------------
-st.set_page_config(page_title="VulnAI: Security Auditor", layout="wide")
+st.set_page_config(
+    page_title="VulnAI: Security Engine",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 @st.cache_resource
 def get_ai_client():
@@ -23,36 +27,67 @@ def get_ai_client():
 client = get_ai_client()
 
 # --------------------------------------------------------
-# 2. LIGHTWEIGHT REPOSITORY PARSER
+# 2. FILE SCANNING & RESOURCE CALCULATOR
 # --------------------------------------------------------
+def estimate_tokens(text: str) -> int:
+    """Estimates code block context footprint safely."""
+    return int(len(text) / 3.5) + 50
+
+def parse_dependencies(file_path: str) -> list:
+    """Scans code components to look up structural import declarations."""
+    deps = []
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        patterns = [
+            r'(?:import|from)\s+([a-zA-Z0-9_\.]+)',
+            r'require\([\'"](.+)[\'"]\)',
+            r'#include\s+[\'"](.+)[\'"]'
+        ]
+        for pattern in patterns:
+            matches = re.findall(pattern, content)
+            for match in matches:
+                deps.append(match.split('.')[0])
+    except Exception:
+        pass
+    return deps
+
 def scan_directory(base_dir: str):
+    """Maps entire workspace archive compiling files and computing weights."""
     file_registry = {}
     for root, _, files in os.walk(base_dir):
         for file in files:
-            if file.startswith('.'): continue
+            if file.startswith('.'):
+                continue
             full_path = os.path.join(root, file)
             rel_path = os.path.relpath(full_path, base_dir)
             try:
                 with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
                 file_registry[rel_path] = {
-                    "content": content,
-                    "size": os.path.getsize(full_path)
+                    "full_path": full_path,
+                    "size_bytes": os.path.getsize(full_path),
+                    "estimated_tokens": estimate_tokens(content),
+                    "dependencies": parse_dependencies(full_path),
+                    "content": content
                 }
-            except:
+            except Exception:
                 continue
     return file_registry
 
 # --------------------------------------------------------
-# 3. INTERACTIVE TREE SIDEBAR
+# 3. INTERACTIVE SIDEBAR TREE COMPONENT
 # --------------------------------------------------------
 def render_sidebar_tree(base_dir: str, current_dir: str, level=0):
+    """Recursively draws the folder structure map in the left sidebar."""
     try:
         items = os.listdir(current_dir)
-    except: return
+    except Exception:
+        return
     items = sorted(items, key=lambda x: (not os.path.isdir(os.path.join(current_dir, x)), x.lower()))
     for item in items:
-        if item.startswith('.'): continue
+        if item.startswith('.'):
+            continue
         full_path = os.path.join(current_dir, item)
         indent = "  " * level
         if os.path.isdir(full_path):
@@ -62,10 +97,11 @@ def render_sidebar_tree(base_dir: str, current_dir: str, level=0):
             st.sidebar.text(f"{indent}📄 {item}")
 
 # --------------------------------------------------------
-# 4. MAIN UI INTERFACE & ROUTER
+# 4. LIVE ROUTER & RENDERING INTERFACE
 # --------------------------------------------------------
-st.title("🛡️ VulnAI: Live Streaming Auditor")
-st.caption("Bachelor Project Portal • Powered by Gemma 4 31B Streaming Architecture")
+st.title("🛡️ VulnAI: Advanced Repository Security Engine")
+st.caption("Bachelor Project Portal Engine • Optimized via Gemma 4 26B MoE")
+st.write("")
 
 uploaded_zip = st.file_uploader("Upload repository package ZIP file", type=["zip"])
 
@@ -80,62 +116,77 @@ if uploaded_zip:
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
         zip_ref.extractall(extract_path)
         
+    # Process project telemetry immediately
     file_registry = scan_directory(extract_path)
     
+    # Sidebar tree generation
     st.sidebar.markdown("### 📂 Folder Workspace")
     render_sidebar_tree(extract_path, extract_path)
     
-    st.subheader("📊 Workspace Details")
-    st.write(f"Total Discovered Files: **{len(file_registry)}**")
+    # Dashboard Telemetry Cards
+    st.subheader("📊 Workspace Telemetry Snapshot")
+    m_col1, m_col2, m_col3 = st.columns(3)
+    m_col1.metric("Total File Assets", len(file_registry))
+    m_col2.metric("Workspace Size", f"{sum(f['size_bytes'] for f in file_registry.values()) / 1024:.2f} KB")
+    m_col3.metric("Estimated Tokens", f"~{sum(f['estimated_tokens'] for f in file_registry.values())}")
+    st.write("")
     
-    if st.button("🚀 Start Live-Streamed Analysis", use_container_width=True):
+    if st.button("🚀 Execute Comprehensive Analysis Scan", use_container_width=True):
         st.write("### 📜 Real-time Generation Feed")
         
-        # We loop and hit Gemma 4 31B individually per file with a 4-second safety gap
-        # This fixes hanging issues, respects rate limits, and displays immediate output
+        # Loop through files sequentially to support streaming logs and exact execution times
         for current_idx, (file_path, file_meta) in enumerate(file_registry.items()):
             st.markdown(f"---")
             st.markdown(f"#### 🔍 Auditing Target File ({current_idx+1}/{len(file_registry)}): `{file_path}`")
             
-            # 4 Second Cooldown Gate to respect 15 RPM
+            # 4-Second safety interval gate
             time.sleep(4.0)
             
+            # Unbiased prompt structure preventing forced hallucinations
             prompt = (
-                "You are an advanced software security expert auditing code repositories.\n"
-                "Analyze this file completely. Do NOT stop searching if you find a defect; "
-                "continue scanning everything to provide a full report.\n\n"
-                "Return your analysis matching this exact structure:\n"
+                "You are an objective, hyper-accurate software security auditor. Your goal is to analyze code "
+                "for security vulnerabilities, malware patterns, and fatal structural code injection gaps.\n\n"
+                "CRITICAL: Do NOT invent, assume, or force false flaws if the code is safe. "
+                "Be a completely unbiased analyzer. If the code follows safe patterns, explicitly rate it as SAFE "
+                "and state that no flaws were found.\n\n"
+                "Provide your response matching this exact layout format:\n"
                 "### Status: [SAFE or VULNERABLE or MALICIOUS]\n\n"
                 "### Flaws Found:\n"
-                "[List details of flaws or write 'None.']\n\n"
+                "[List genuine issues itemized here. If no security issues exist, write 'None.']\n\n"
                 "### Refactored Code:\n"
                 "```\n"
-                "[Full working replacement code]\n"
+                "[Only provide replacement code if vulnerabilities were present. Otherwise, state 'No refactoring required.']\n"
                 "```\n\n"
-                f"Target File Path: {file_path}\n"
-                f"Target Code:\n{file_meta['content']}"
+                f"File Target Name: {file_path}\n"
+                f"Code Component Content:\n{file_meta['content']}"
             )
             
             config = types.GenerateContentConfig(
                 thinking_config=types.ThinkingConfig(thinking_level="HIGH"),
             )
             
-            # Define an empty dynamic text element block to stream content into
-            stream_output_box = st.empty()
-            full_streamed_text = ""
+            stream_box = st.empty()
+            full_text = ""
+            
+            # Start timer calculation
+            start_time = time.time()
             
             try:
+                # Switched cleanly to the faster MoE model
                 response_stream = client.models.generate_content_stream(
-                    model="gemma-4-31b-it",
+                    model="gemma-4-26b-a4b-it",
                     contents=prompt,
                     config=config,
                 )
                 
                 for chunk in response_stream:
                     if chunk.text:
-                        full_streamed_text += chunk.text
-                        # Update the UI live as characters drop in
-                        stream_output_box.markdown(full_streamed_text)
+                        full_text += chunk.text
+                        stream_box.markdown(full_text)
                         
+                # Conclude timing tracking metrics
+                elapsed_time = time.time() - start_time
+                st.info(f"⏱️ **Analysis Duration:** {elapsed_time:.2f} seconds")
+                
             except Exception as e:
-                st.error(f"⚠️ API Pipeline exception on `{file_path}`: {str(e)}")
+                st.error(f"⚠️ API pipeline failure on `{file_path}`: {str(e)}")
