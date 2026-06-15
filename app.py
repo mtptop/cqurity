@@ -10,7 +10,7 @@ from groq import Groq
 # 1. STREAMLIT SYSTEM INITIALIZATION
 # --------------------------------------------------------
 st.set_page_config(
-    page_title="VulnAI: Groq C Advanced Engine",
+    page_title="VulnAI: Groq Advanced Engine",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -153,7 +153,7 @@ def execute_groq_scan(batch_files: list, registry: dict):
         
     try:
         completion = client.chat.completions.create(
-            model="groq/compound",
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt_payload}],
             stream=True
         )
@@ -166,7 +166,7 @@ def execute_groq_scan(batch_files: list, registry: dict):
 # 6. MAIN APPLICATION GRAPHICAL ROUTER
 # --------------------------------------------------------
 st.title("🛡️ VulnAI: Advanced Groq Security Engine")
-st.caption("Bachelor Project Portal Engine • Hosted on Meta Llama 4 Scout (17B Active MoE)")
+st.caption("Bachelor Project Portal Engine • Hosted on Meta Llama 3.3 Scout (17B Active MoE)")
 st.write("")
 
 uploaded_zip = st.file_uploader("Drop your target source repository ZIP archive here", type=["zip"])
