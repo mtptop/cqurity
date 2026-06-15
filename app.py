@@ -153,7 +153,7 @@ def execute_groq_scan(batch_files: list, registry: dict):
         
     try:
         completion = client.chat.completions.create(
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            model="groq/compound",
             messages=[{"role": "user", "content": prompt_payload}],
             stream=True
         )
