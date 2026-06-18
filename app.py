@@ -113,7 +113,6 @@ def render_sidebar_tree(current_dir: str, base_dir: str, parent_element, flagged
         full_path = os.path.join(current_dir, item)
         rel_path = os.path.relpath(full_path, base_dir)
         
-        # Check if this item path or folder path is flagged
         is_flagged = rel_path in flagged_paths
         prefix = "🛑 " if is_flagged else ""
         
@@ -179,7 +178,6 @@ def parse_batch_outputs(raw_text: str) -> Dict[str, Dict[str, str]]:
 uploaded_zip = st.file_uploader("Upload repository package ZIP file", type=["zip"])
 
 if uploaded_zip:
-    # Reset internal analysis states if a completely different project ZIP is uploaded
     if "current_zip_name" not in st.session_state or st.session_state.current_zip_name != uploaded_zip.name:
         st.session_state.current_zip_name = uploaded_zip.name
         st.session_state.all_parsed_results = {}
@@ -206,19 +204,16 @@ if uploaded_zip:
         st.warning("Workspace Scan Complete: No valid textual source code assets identified inside the payload.")
         st.stop()
         
-    # Build the set of flagged file paths and cascade them up to parent directories
     flagged_paths = set()
     for rel_path, data in st.session_state.all_parsed_results.items():
         if data.get("status") in ["VULNERABLE", "MALICIOUS"]:
             flagged_paths.add(rel_path)
             
-            # Decompose path step-by-step to flag parent directories
             parent = os.path.dirname(rel_path)
             while parent and parent != ".":
                 flagged_paths.add(parent)
                 parent = os.path.dirname(parent)
         
-    # Render the sidebar header to match the uploaded zip file name
     st.sidebar.markdown(f"### {uploaded_zip.name}")
     render_sidebar_tree(extract_path, extract_path, st.sidebar, flagged_paths)
     
@@ -239,6 +234,9 @@ if uploaded_zip:
             "You are an objective, hyper-accurate software security auditor. Analyze the following files "
             "comprehensively from top to bottom. MANDATORY: Do NOT stop searching or truncate outputs after finding "
             "the first vulnerability; you must scan the entire file fully to identify every single flaw.\n\n"
+            "CRITICAL CLASSIFICATION RULES:\n"
+            "- Set [RESULT] to VULNERABLE if the file contains accidental security bugs, logical flaws, or risky code left by a developer.\n"
+            "- Set [RESULT] to MALICIOUS if the code contains intentional threats, data exfiltration, backdoors, spyware, hidden scripts, or explicit malware logic.\n\n"
             "If a file is completely safe, follow the SAFE format precisely. Do not fabricate issues.\n\n"
             "You MUST enclose your audit response for EACH file strictly using this structural layout template:\n\n"
             "=== FILE_START: [Insert Relative File Path Here] ===\n"
@@ -287,13 +285,11 @@ if uploaded_zip:
             except Exception as e:
                 st.error(f"Groq Core Connection Error on Batch {idx + 1}: {str(e)}")
         
-        # Save results globally to session state and trigger rerun to redraw sidebar elements instantly
         st.session_state.all_parsed_results = all_parsed_results
         st.session_state.total_time_spent = total_time_spent
         st.session_state.scan_completed = True
         st.rerun()
 
-    # Persistent layout presentation section following the rerun
     if st.session_state.scan_completed:
         st.write("---")
         st.markdown("## File Audit Breakdown")
@@ -307,8 +303,8 @@ if uploaded_zip:
             if status == "SAFE":
                 st.success("Safe")
             else:
-                st.error(status.capitalize())
-                st.markdown("**Identified Vulnerabilities:**")
+                st.error(status.upper())
+                st.markdown("**Identified Threat Metrics:**")
                 st.write(file_data.get("issues", "Unspecified flaw details."))
                 
                 if file_data.get("flawed_code"):
@@ -330,8 +326,10 @@ if uploaded_zip:
             for f_path in flagged_files:
                 d = st.session_state.all_parsed_results[f_path]
                 st.markdown(f"### `{f_path}`")
-                st.markdown(f"- **Classification Status:** {d['status']}")
+                st.markdown(f"- **Classification Status:** **{d['status']}**")
+                
+                label_prefix = "Core Threat/Malware Logic" if d['status'] == "MALICIOUS" else "Core Vulnerability"
                 summary_line = d.get("issues", "Security flaw identified.").split("\n")[0]
-                st.markdown(f"- **Core Vulnerability:** {summary_line}")
+                st.markdown(f"- **{label_prefix}:** {summary_line}")
         else:
             st.success("All analyzed files passed verification safely. Zero architectural defects discovered.")
