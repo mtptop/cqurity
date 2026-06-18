@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 st.title("CQurity")
-st.subheader("Llama 4 Scout — Enterprise Code Auditor")
+st.subheader("Llama 4 Scout — Automated Code Auditor")
 st.write("")
 
 @st.cache_resource
