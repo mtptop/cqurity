@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("CQurityPortal")
 
 st.set_page_config(
-    page_title="CQurity Portal",
+    page_title="CQurity",
     layout="wide",
     initial_sidebar_state="expanded"
 )
