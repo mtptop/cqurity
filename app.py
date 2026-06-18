@@ -21,6 +21,14 @@ st.title("CQurity")
 st.subheader("Llama 4 Scout - Code Auditor")
 st.write("")
 
+# Initialize session state tracking variables
+if "all_parsed_results" not in st.session_state:
+    st.session_state.all_parsed_results = {}
+if "scan_completed" not in st.session_state:
+    st.session_state.scan_completed = False
+if "total_time_spent" not in st.session_state:
+    st.session_state.total_time_spent = 0.0
+
 @st.cache_resource
 def get_groq_client() -> Groq:
     api_key = os.environ.get("GROQ_API_KEY")
@@ -90,7 +98,7 @@ def scan_directory(base_dir: str) -> Dict[str, Dict[str, Any]]:
                 continue
     return file_registry
 
-def render_sidebar_tree(current_dir: str, base_dir: str, parent_element) -> None:
+def render_sidebar_tree(current_dir: str, base_dir: str, parent_element, flagged_paths: set) -> None:
     try:
         items = os.listdir(current_dir)
     except Exception as e:
@@ -103,12 +111,17 @@ def render_sidebar_tree(current_dir: str, base_dir: str, parent_element) -> None
         if item.startswith('.') or '__pycache__' in item:
             continue
         full_path = os.path.join(current_dir, item)
+        rel_path = os.path.relpath(full_path, base_dir)
+        
+        # Check if this item path or folder path is flagged
+        is_flagged = rel_path in flagged_paths
+        prefix = "🛑 " if is_flagged else ""
         
         if os.path.isdir(full_path):
-            folder_node = parent_element.expander(f"📁 {item}", expanded=False)
-            render_sidebar_tree(full_path, base_dir, folder_node)
+            folder_node = parent_element.expander(f"{prefix}📁 {item}", expanded=False)
+            render_sidebar_tree(full_path, base_dir, folder_node, flagged_paths)
         else:
-            parent_element.text(f"📄 {item}")
+            parent_element.text(f"{prefix}📄 {item}")
 
 def generate_analysis_batches(registry: dict, max_tokens: int = 65000) -> List[List[str]]:
     batches: List[List[str]] = []
@@ -166,6 +179,13 @@ def parse_batch_outputs(raw_text: str) -> Dict[str, Dict[str, str]]:
 uploaded_zip = st.file_uploader("Upload repository package ZIP file", type=["zip"])
 
 if uploaded_zip:
+    # Reset internal analysis states if a completely different project ZIP is uploaded
+    if "current_zip_name" not in st.session_state or st.session_state.current_zip_name != uploaded_zip.name:
+        st.session_state.current_zip_name = uploaded_zip.name
+        st.session_state.all_parsed_results = {}
+        st.session_state.scan_completed = False
+        st.session_state.total_time_spent = 0.0
+
     temp_dir = tempfile.TemporaryDirectory()
     zip_path = os.path.join(temp_dir.name, "repo.zip")
     extract_path = os.path.join(temp_dir.name, "extracted")
@@ -185,9 +205,22 @@ if uploaded_zip:
     if not file_registry:
         st.warning("Workspace Scan Complete: No valid textual source code assets identified inside the payload.")
         st.stop()
-    
-    st.sidebar.markdown("### Repository Workspace Tree")
-    render_sidebar_tree(extract_path, extract_path, st.sidebar)
+        
+    # Build the set of flagged file paths and cascade them up to parent directories
+    flagged_paths = set()
+    for rel_path, data in st.session_state.all_parsed_results.items():
+        if data.get("status") in ["VULNERABLE", "MALICIOUS"]:
+            flagged_paths.add(rel_path)
+            
+            # Decompose path step-by-step to flag parent directories
+            parent = os.path.dirname(rel_path)
+            while parent and parent != ".":
+                flagged_paths.add(parent)
+                parent = os.path.dirname(parent)
+        
+    # Render the sidebar header to match the uploaded zip file name
+    st.sidebar.markdown(f"### {uploaded_zip.name}")
+    render_sidebar_tree(extract_path, extract_path, st.sidebar, flagged_paths)
     
     st.subheader("Project Metrics")
     col1, col2, col3 = st.columns(3)
@@ -254,13 +287,21 @@ if uploaded_zip:
             except Exception as e:
                 st.error(f"Groq Core Connection Error on Batch {idx + 1}: {str(e)}")
         
+        # Save results globally to session state and trigger rerun to redraw sidebar elements instantly
+        st.session_state.all_parsed_results = all_parsed_results
+        st.session_state.total_time_spent = total_time_spent
+        st.session_state.scan_completed = True
+        st.rerun()
+
+    # Persistent layout presentation section following the rerun
+    if st.session_state.scan_completed:
         st.write("---")
         st.markdown("## File Audit Breakdown")
         
         for file_path in file_registry.keys():
             st.markdown(f"### Target File asset: `{file_path}`")
             
-            file_data = all_parsed_results.get(file_path, {"status": "SAFE"})
+            file_data = st.session_state.all_parsed_results.get(file_path, {"status": "SAFE"})
             status = file_data["status"]
             
             if status == "SAFE":
@@ -281,13 +322,13 @@ if uploaded_zip:
             
         st.write("---")
         st.markdown("## Final Summary Audit Report")
-        st.write(f"Total processing runtime elapsed: **{total_time_spent:.2f} seconds**")
+        st.write(f"Total processing runtime elapsed: **{st.session_state.total_time_spent:.2f} seconds**")
         
-        flagged_files = [f for f, d in all_parsed_results.items() if d.get("status") in ["VULNERABLE", "MALICIOUS"]]
+        flagged_files = [f for f, d in st.session_state.all_parsed_results.items() if d.get("status") in ["VULNERABLE", "MALICIOUS"]]
         
         if flagged_files:
             for f_path in flagged_files:
-                d = all_parsed_results[f_path]
+                d = st.session_state.all_parsed_results[f_path]
                 st.markdown(f"### `{f_path}`")
                 st.markdown(f"- **Classification Status:** {d['status']}")
                 summary_line = d.get("issues", "Security flaw identified.").split("\n")[0]
